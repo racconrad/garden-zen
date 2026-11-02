@@ -1,0 +1,10 @@
+{
+  "id": "garden-zen",
+  "name": "Garden Zen",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "See your vault as a zen garden: every note is a plant that grows as you write and link, and folders become islands.",
+  "author": "racconrad",
+  "authorUrl": "https://github.com/racconrad",
+  "isDesktopOnly": false
+}
