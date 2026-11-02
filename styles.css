@@ -157,3 +157,11 @@
   .mg-petals, .mg-clouds { display: none; }
   .mg-anim { transition: none; }
 }
+.water { fill: color-mix(in srgb, #5f8fa0 80%, var(--mg-sand)); }
+.pond-rim { fill: #9c9a90; }
+.lily { fill: color-mix(in srgb, var(--mg-moss) 85%, #fff); }
+.koi { fill: #f08a3c; }
+.pagoda-wall { fill: #b9a487; }
+.pagoda-roof { fill: #4c3f37; }
+.torii { fill: #c23b2c; }
+.torii-top { fill: #2f2724; }

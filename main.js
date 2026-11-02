@@ -28,10 +28,21 @@ const GROUPS = { type: 'Type', folder: 'Folder', subfolder: 'Subfolder', tag: 'T
 const PALETTE_NAMES = Object.fromEntries(Object.entries(PRESETS).map(([id, p]) => [id, p.name]));
 const TREE_NAMES = { mixed: 'Mixed', round: 'Round', pine: 'Pines', bonsai: 'Bonsai' };
 const DECOR_NAMES = { none: 'None', some: 'Some', lots: 'Lots' };
+// Sand pieces sit in open sand; shore pieces stand beside each island.
+const DECOR_TYPES = {
+  rock: { name: 'Rocks', key: 'decorRocks', place: 'sand' },
+  pond: { name: 'Koi ponds', key: 'decorPonds', place: 'sand' },
+  lantern: { name: 'Lanterns', key: 'decorLanterns', place: 'shore' },
+  pagoda: { name: 'Pagodas', key: 'decorPagodas', place: 'shore' },
+  torii: { name: 'Torii gates', key: 'decorToriis', place: 'shore' },
+};
 const LABEL_NAMES = { mature: 'Mature', always: 'All', hover: 'On hover' };
 
 const DEFAULTS = {
   exclude: '',
+  moonFolders: '',
+  planetFolders: '',
+  collapseMoons: true,
   groupBy: 'type',
   growth: 1,
   bloomDays: 7,
@@ -47,6 +58,11 @@ const DEFAULTS = {
   zoneNames: true,
   textColor: '#5a4636',
   decor: 'some',
+  decorRocks: true,
+  decorPonds: false,
+  decorLanterns: true,
+  decorPagodas: false,
+  decorToriis: false,
   // motion
   swayAmp: 2,
   swaySpeed: 5,
@@ -128,6 +144,26 @@ function rock(size, seed, mossy = false) {
 }
 
 // Stone lantern (tōrō) with a warm light.
+function pond(seed) {
+  const w = 6 + (seed % 3);
+  return `<ellipse class="pond-rim" cx="0" cy="0" rx="${w + 1}" ry="${(w + 1) / 2}"/><ellipse class="water" cx="0" cy="0" rx="${w}" ry="${w / 2}"/>`
+    + `<ellipse class="lily" cx="${-w / 3}" cy="-0.6" rx="1.6" ry="0.8"/><path class="koi" d="M${w / 4} 0.8q1.6 -1.4 3.2 0q-1.6 1 -3.2 0l-0.9 0.5l0.2 -1z"/>`;
+}
+
+function pagoda() {
+  const tier = (y, w) => `<rect class="pagoda-wall" x="${-w * 0.45}" y="${y - 2.6}" width="${w * 0.9}" height="2.6"/>`
+    + `<polygon class="pagoda-roof" points="${-w},${y - 2.6} ${w},${y - 2.6} ${w * 0.55},${y - 4.2} ${-w * 0.55},${y - 4.2}"/>`;
+  return '<ellipse class="ground-shadow" cx="1.5" cy="0.5" rx="5" ry="2.5"/><rect class="stone" x="-3.5" y="-1.2" width="7" height="1.2"/>'
+    + tier(-1.2, 4.6) + tier(-5.4, 3.8) + tier(-9.6, 3) + '<rect class="pagoda-roof" x="-0.3" y="-17" width="0.6" height="3.2"/>';
+}
+
+function torii() {
+  return '<ellipse class="ground-shadow" cx="1.5" cy="0.5" rx="6" ry="2.5"/>'
+    + '<rect class="torii" x="-4.6" y="-13" width="1.4" height="13"/><rect class="torii" x="3.2" y="-13" width="1.4" height="13"/>'
+    + '<rect class="torii" x="-5.6" y="-10.6" width="11.2" height="1.1"/>'
+    + '<path class="torii-top" d="M-7.2 -14.2Q0 -12.6 7.2 -14.2L6.8 -12.6Q0 -11.6 -6.8 -12.6Z"/>';
+}
+
 function lantern() {
   return '<ellipse class="ground-shadow" cx="1.5" cy="0.5" rx="5" ry="2.5"/>'
     + '<polygon class="stone" points="-3.5,0 3.5,0 3,-2 -3,-2"/><polygon class="stone shade" points="0,0 3.5,0 3,-2 0,-2"/>'
@@ -139,8 +175,9 @@ function lantern() {
 }
 
 // Lone sand rocks and stone lanterns beside the islands; deterministic so the garden stays put.
-function decorations(cells, beds, amount) {
+function decorations(cells, beds, amount, kinds = ['rock', 'lantern']) {
   if (amount === 'none' || !cells.length) return [];
+  const sand = kinds.filter(t => DECOR_TYPES[t]?.place === 'sand'), shore = kinds.filter(t => DECOR_TYPES[t]?.place === 'shore');
   const taken = new Set(cells.map(c => c.join()));
   const near = (c, r, d) => cells.some(([x, y]) => Math.max(Math.abs(x - c), Math.abs(y - r)) <= d);
   const cs = cells.map(c => c[0]), rs = cells.map(c => c[1]);
@@ -152,24 +189,24 @@ function decorations(cells, beds, amount) {
   }
   // A few rocks, kept apart from each other, more for bigger gardens.
   const want = Math.max(2, Math.ceil(cells.length / (amount === 'lots' ? 2 : 6))), out = [];
-  for (const spot of spots.sort((a, b) => a.h - b.h)) {
+  for (const spot of sand.length ? spots.sort((a, b) => a.h - b.h) : []) {
     if (out.length >= want) break;
     if (out.some(o => Math.max(Math.abs(o.c - spot.c), Math.abs(o.r - spot.r)) < 3)) continue;
-    out.push({ type: 'rock', c: spot.c, r: spot.r, seed: hash(`roca${spot.c},${spot.r}`) /* seed salt kept so rock shapes don't change */ });
+    out.push({ type: sand[out.length % sand.length], c: spot.c, r: spot.r, seed: hash(`roca${spot.c},${spot.r}`) /* seed salt kept so rock shapes don't change */ });
   }
   const zones = new Map();
   cells.forEach((cell, i) => {
     if (!zones.has(beds[i])) zones.set(beds[i], []);
     zones.get(beds[i]).push(cell);
   });
-  for (const [bed, list] of zones) {
+  for (const [bed, list] of shore.length ? zones : []) {
     const h = hash(bed);
     for (let k = 0; k < (amount === 'lots' ? 2 : 1) && k < list.length; k++) {
       const [c, r] = list[(h >>> (k * 5)) % list.length];
       const spot = [...DIRS.keys()].map(d => DIRS[(d + h + k * 3) % 8]).map(([dc, dr]) => [c + dc, r + dr]).find(cell => !taken.has(cell.join()));
       if (!spot) continue;
       taken.add(spot.join());
-      out.push({ type: 'lantern', c: spot[0], r: spot[1], seed: h });
+      out.push({ type: shore[(out.length + h) % shore.length], c: spot[0], r: spot[1], seed: h });
     }
   }
   return out;
@@ -322,6 +359,8 @@ function cluster(plants, edges, { moonGap = 2.5, roughness = 0.5 } = {}) {
   return cells;
 }
 
+const decorKinds = s => Object.keys(DECOR_TYPES).filter(t => s[DECOR_TYPES[t].key]);
+
 const describe = (p, v) => `${p.file.basename} · ${STAGES[v.level]}${v.state === 'healthy' ? '' : `, ${STATES[v.state]}`} · ${v.leaves} links`;
 
 class NoteModal extends FuzzySuggestModal {
@@ -444,6 +483,7 @@ class GardenView extends ItemView {
       .onChange(v => { s.palette = v; applyPreset(s, v); redraw(); }));
     row('Trees').addDropdown(d => d.addOptions(TREE_NAMES).setValue(s.treeStyle).onChange(v => { s.treeStyle = v; redraw(); }));
     row('Decoration').addDropdown(d => d.addOptions(DECOR_NAMES).setValue(s.decor).onChange(v => { s.decor = v; relayout(); }));
+    for (const t of Object.values(DECOR_TYPES)) row(t.name).addToggle(c => c.setValue(s[t.key]).onChange(v => { s[t.key] = v; relayout(); }));
     row('Labels').addDropdown(d => d.addOptions(LABEL_NAMES).setValue(s.labels).onChange(v => { s.labels = v; redraw(); }));
     row('Plant size').addSlider(c => c.setLimits(0.6, 1.6, 0.1).setValue(s.plantScale).setDynamicTooltip().onChange(v => { s.plantScale = v; redraw(); }));
 
@@ -518,7 +558,7 @@ class GardenView extends ItemView {
     });
 
     // Layout covers the filtered set; the growth animation reuses it so plants appear in place.
-    const key = `${base.join()}|${s.decor}`;
+    const key = `${base.join()}|${s.decor}|${decorKinds(s)}`;
     if (this.dirty || key !== this.layoutKey) {
       if (key !== this.layoutKey) this.vb = null;
       this.layoutKey = key;
@@ -528,7 +568,7 @@ class GardenView extends ItemView {
       const localEdges = edges.filter(([a, b]) => local.has(a) && local.has(b)).map(([a, b]) => [local.get(a), local.get(b)]);
       const cells = layout(base.map(i => plants[i]), localEdges, s.islandGap, { moonGap: s.moonGap, roughness: s.roughness });
       this.cells = new Map(base.map((g, l) => [g, cells[l]]));
-      this.decor = decorations(cells, base.map(i => plants[i].bed), s.decor);
+      this.decor = decorations(cells, base.map(i => plants[i].bed), s.decor, decorKinds(s));
       // Older notes sprout first; each note takes a quarter of the animation to grow.
       const ranked = [...base].sort((a, b) => plants[a].ctime - plants[b].ctime || plants[a].file.path.localeCompare(plants[b].file.path));
       this.appear = new Map(ranked.map((i, r) => [i, (r / Math.max(ranked.length, 1)) * 0.75]));
@@ -641,7 +681,12 @@ class GardenView extends ItemView {
     for (const dd of this.decor) {
       const [x, y] = px([dd.c, dd.r]);
       items.push([depth([dd.c, dd.r]), `<g class="mg-deco" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) scale(${k.toFixed(3)})">`
-        + `${dd.type === 'lantern' ? `<g transform="scale(0.8)">${lantern()}</g>` : `<ellipse class="ground-shadow" cx="1.5" cy="0.5" rx="5" ry="2.5"/>${rock(3 + (dd.seed % 3), dd.seed, dd.seed % 3 === 0)}`}</g>`]);
+        + `${{
+          lantern: () => `<g transform="scale(0.8)">${lantern()}</g>`,
+          pagoda: () => `<g transform="scale(0.8)">${pagoda()}</g>`,
+          torii: () => `<g transform="scale(0.8)">${torii()}</g>`,
+          pond: () => pond(dd.seed),
+        }[dd.type]?.() ?? `<ellipse class="ground-shadow" cx="1.5" cy="0.5" rx="5" ry="2.5"/>${rock(3 + (dd.seed % 3), dd.seed, dd.seed % 3 === 0)}`}</g>`]);
     }
     const flora = items.sort((a, b) => a[0] - b[0]).map(it => it[1]).join('');
     this.vb ??= this.fitted();
@@ -1061,8 +1106,14 @@ class GardenSettings extends PluginSettingTab {
       .addSlider(c => c.setLimits(min, max, step).setValue(s[key]).setDynamicTooltip().onChange(v => { s[key] = v; save(); }));
     containerEl.empty();
 
-    row('Excluded folders', 'One per line; a folder name matches at any depth, e.g. memories/.')
+    row('Excluded folders', 'One per line. A folder name matches at any depth, e.g. drafts/.')
       .addTextArea(c => c.setValue(s.exclude).onChange(v => { s.exclude = v; save(); }));
+    row('Moon folders', 'One name per line. Notes in these folders orbit their parent folder as small pebbles instead of growing on it, e.g. logs or archive.')
+      .addTextArea(c => c.setValue(s.moonFolders).onChange(v => { s.moonFolders = v; save(); }));
+    row('Collapse repeated moons', 'Moons with the same title and a trailing number ("Weekly log - 12", "- 13") keep only the newest.')
+      .addToggle(c => c.setValue(s.collapseMoons).onChange(v => { s.collapseMoons = v; save(); }));
+    row('Planet folders', 'One name per line. Each note directly inside these folders becomes an island of its own, e.g. areas.')
+      .addTextArea(c => c.setValue(s.planetFolders).onChange(v => { s.planetFolders = v; save(); }));
 
     new Setting(containerEl).setName('Islands').setHeading();
     row('Group by', 'Each island is a topic. `island: Name` in a note sends it to that island.')
@@ -1073,8 +1124,11 @@ class GardenSettings extends PluginSettingTab {
     slider('Roughness', 'roughness', 0, 1, 0.05);
     slider('Sand furrows', 'rings', 0, 6, 1);
     row('Island names').addToggle(c => c.setValue(s.zoneNames).onChange(v => { s.zoneNames = v; save(); }));
-    row('Decoration', 'Rocks in the sand and lanterns beside the islands.')
+    row('Decoration', 'How much: pieces for the sand and for the shores of each island.')
       .addDropdown(c => c.addOptions(DECOR_NAMES).setValue(s.decor).onChange(v => { s.decor = v; save(); }));
+    for (const t of Object.values(DECOR_TYPES)) {
+      row(t.name, t.place === 'sand' ? 'In open sand.' : 'Beside the islands.').addToggle(c => c.setValue(s[t.key]).onChange(v => { s[t.key] = v; save(); }));
+    }
 
     new Setting(containerEl).setName('Plants').setHeading();
     row('Trees', '`plant: pine`, `round` or `bonsai` in a note picks its own.')
@@ -1188,6 +1242,8 @@ module.exports = class MindGarden extends Plugin {
     const { vault, metadataCache } = this.app, s = this.settings;
     const exclude = s.exclude.split('\n').map(x => x.trim()).filter(Boolean);
     const links = metadataCache.resolvedLinks;
+    const names = text => new Set(text.split(/[\n,]/).map(x => x.trim().replace(/^\/+|\/+$/g, '').toLowerCase()).filter(Boolean));
+    const moonDirs = names(s.moonFolders), planetDirs = names(s.planetFolders);
     const files = vault.getMarkdownFiles().filter(f => !exclude.some(p => ('/' + f.path).includes('/' + p)));
     const all = (await Promise.all(files.map(async file => {
       const cache = metadataCache.getFileCache(file);
@@ -1196,11 +1252,10 @@ module.exports = class MindGarden extends Plugin {
       const text = await vault.cachedRead(file);
       const body = cache?.frontmatterPosition ? text.slice(cache.frontmatterPosition.end.offset) : text;
       const folder = file.parent?.isRoot() ? 'Root' : file.path.split('/')[0];
-      // Memory notes orbit their project as moons; Areas notes are planets of their own.
-      const moon = file.parent?.name === 'memories';
+      const moon = moonDirs.has(file.parent?.name.toLowerCase());
       const dir = moon ? file.parent.parent : file.parent;
       // shortcut: islands use the folder name only, so two folders with the same name share an island.
-      const sub = !dir || dir.isRoot() ? 'Root' : dir.name === 'Areas' ? file.basename : dir.name;
+      const sub = !dir || dir.isRoot() ? 'Root' : planetDirs.has(dir.name.toLowerCase()) ? file.basename : dir.name;
       const zone = fm.island ? String(fm.island) : {
         type: fm.type ? String(fm.type) : folder,
         folder: folder,
@@ -1222,14 +1277,14 @@ module.exports = class MindGarden extends Plugin {
       };
     }))).filter(Boolean);
 
-    // Repeated memories ("Session summary - 748", "- 750"…) collapse into their newest copy.
+    // Repeated moons ("Weekly log - 12", "- 13"…) collapse into their newest copy.
     const newest = new Map();
     for (const p of all) {
-      if (!p.moon) continue;
+      if (!p.moon || !s.collapseMoons) continue;
       const key = `${p.bed}|${p.file.basename.replace(/ - \d+$/, '')}`;
       if (!newest.has(key) || newest.get(key).mtime < p.mtime) newest.set(key, p);
     }
-    const plants = all.filter(p => !p.moon || newest.get(`${p.bed}|${p.file.basename.replace(/ - \d+$/, '')}`) === p);
+    const plants = all.filter(p => !p.moon || !s.collapseMoons || newest.get(`${p.bed}|${p.file.basename.replace(/ - \d+$/, '')}`) === p);
 
     // One edge per linked pair; `mutual` when both notes link to each other.
     const index = new Map(plants.map((p, i) => [p.file.path, i]));
@@ -1249,4 +1304,4 @@ module.exports = class MindGarden extends Plugin {
   }
 };
 
-Object.assign(module.exports, { stage, parseStage, health, layout, element, iso, gardenLevel, decorations, lantern });
+Object.assign(module.exports, { stage, parseStage, health, layout, element, iso, gardenLevel, decorations, lantern, pagoda, torii, pond });
