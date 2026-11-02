@@ -53,7 +53,7 @@ Everything below lives in the settings tab and the side panel of the garden view
 | --- | --- |
 | Notes | Excluded folders, moon folders, collapse repeated moons, planet folders |
 | Islands | Group by (type, folder, subfolder, tag, or a single island), size, spacing between islands, moon orbit, roughness of the outlines, sand furrows, island names |
-| Decoration | Amount, plus rocks and koi ponds in the sand, and stone lanterns, pagodas and torii gates on the shores |
+| Decoration | A slider per piece: rocks and koi ponds in the sand (per 20 notes), stone lanterns, pagodas and torii gates on each shore (per island). 0 hides a piece |
 | Plants | Tree style, growth rate, bloom and wilt days, plant size, labels |
 | Motion | Swaying, falling petals, clouds, fireflies, lantern flicker, smooth camera |
 | Colors | Palette presets, or pick your own sand, moss, canopy, blossom and text colors |

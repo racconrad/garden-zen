@@ -27,14 +27,13 @@ const applyPreset = (settings, id) => {
 const GROUPS = { type: 'Type', folder: 'Folder', subfolder: 'Subfolder', tag: 'Tag', none: 'Single island' };
 const PALETTE_NAMES = Object.fromEntries(Object.entries(PRESETS).map(([id, p]) => [id, p.name]));
 const TREE_NAMES = { mixed: 'Mixed', round: 'Round', pine: 'Pines', bonsai: 'Bonsai' };
-const DECOR_NAMES = { none: 'None', some: 'Some', lots: 'Lots' };
-// Sand pieces sit in open sand; shore pieces stand beside each island.
+// Sand pieces sit in open sand (amount per 20 notes); shore pieces stand beside each island (amount per island).
 const DECOR_TYPES = {
-  rock: { name: 'Rocks', key: 'decorRocks', place: 'sand' },
-  pond: { name: 'Koi ponds', key: 'decorPonds', place: 'sand' },
-  lantern: { name: 'Lanterns', key: 'decorLanterns', place: 'shore' },
-  pagoda: { name: 'Pagodas', key: 'decorPagodas', place: 'shore' },
-  torii: { name: 'Torii gates', key: 'decorToriis', place: 'shore' },
+  rock: { name: 'Rocks', key: 'decorRocks', place: 'sand', max: 10 },
+  pond: { name: 'Koi ponds', key: 'decorPonds', place: 'sand', max: 10 },
+  lantern: { name: 'Lanterns', key: 'decorLanterns', place: 'shore', max: 4 },
+  pagoda: { name: 'Pagodas', key: 'decorPagodas', place: 'shore', max: 4 },
+  torii: { name: 'Torii gates', key: 'decorToriis', place: 'shore', max: 4 },
 };
 const LABEL_NAMES = { mature: 'Mature', always: 'All', hover: 'On hover' };
 
@@ -57,12 +56,11 @@ const DEFAULTS = {
   roughness: 0.5,
   zoneNames: true,
   textColor: '#5a4636',
-  decor: 'some',
-  decorRocks: true,
-  decorPonds: false,
-  decorLanterns: true,
-  decorPagodas: false,
-  decorToriis: false,
+  decorRocks: 3,
+  decorPonds: 0,
+  decorLanterns: 1,
+  decorPagodas: 0,
+  decorToriis: 0,
   // motion
   swayAmp: 2,
   swaySpeed: 5,
@@ -175,9 +173,8 @@ function lantern() {
 }
 
 // Lone sand rocks and stone lanterns beside the islands; deterministic so the garden stays put.
-function decorations(cells, beds, amount, kinds = ['rock', 'lantern']) {
-  if (amount === 'none' || !cells.length) return [];
-  const sand = kinds.filter(t => DECOR_TYPES[t]?.place === 'sand'), shore = kinds.filter(t => DECOR_TYPES[t]?.place === 'shore');
+function decorations(cells, beds, amounts = { rock: 3, lantern: 1 }) {
+  if (!cells.length) return [];
   const taken = new Set(cells.map(c => c.join()));
   const near = (c, r, d) => cells.some(([x, y]) => Math.max(Math.abs(x - c), Math.abs(y - r)) <= d);
   const cs = cells.map(c => c[0]), rs = cells.map(c => c[1]);
@@ -187,13 +184,19 @@ function decorations(cells, beds, amount, kinds = ['rock', 'lantern']) {
       if (!near(c, r, 2)) spots.push({ c, r, h: hash(`${c},${r}`) });
     }
   }
-  // A few rocks, kept apart from each other, more for bigger gardens.
-  const want = Math.max(2, Math.ceil(cells.length / (amount === 'lots' ? 2 : 6))), out = [];
-  for (const spot of sand.length ? spots.sort((a, b) => a.h - b.h) : []) {
-    if (out.length >= want) break;
+  // Sand pieces take turns so every enabled kind shows up, kept apart from each other.
+  const queue = [];
+  const counts = Object.entries(DECOR_TYPES).filter(([t, d]) => d.place === 'sand' && amounts[t] > 0)
+    .map(([t]) => [t, Math.max(1, Math.round(cells.length * amounts[t] / 20))]);
+  for (let k = 0; counts.some(([, n]) => n > k); k++) for (const [t, n] of counts) if (k < n) queue.push(t);
+  const out = [];
+  for (const spot of queue.length ? spots.sort((a, b) => a.h - b.h) : []) {
+    if (out.length >= queue.length) break;
     if (out.some(o => Math.max(Math.abs(o.c - spot.c), Math.abs(o.r - spot.r)) < 3)) continue;
-    out.push({ type: sand[out.length % sand.length], c: spot.c, r: spot.r, seed: hash(`roca${spot.c},${spot.r}`) /* seed salt kept so rock shapes don't change */ });
+    out.push({ type: queue[out.length], c: spot.c, r: spot.r, seed: hash(`roca${spot.c},${spot.r}`) /* seed salt kept so rock shapes don't change */ });
   }
+  const shore = [];
+  for (const [t, d] of Object.entries(DECOR_TYPES)) if (d.place === 'shore') for (let k = 0; k < (amounts[t] ?? 0); k++) shore.push(t);
   const zones = new Map();
   cells.forEach((cell, i) => {
     if (!zones.has(beds[i])) zones.set(beds[i], []);
@@ -201,13 +204,21 @@ function decorations(cells, beds, amount, kinds = ['rock', 'lantern']) {
   });
   for (const [bed, list] of shore.length ? zones : []) {
     const h = hash(bed);
-    for (let k = 0; k < (amount === 'lots' ? 2 : 1) && k < list.length; k++) {
-      const [c, r] = list[(h >>> (k * 5)) % list.length];
-      const spot = [...DIRS.keys()].map(d => DIRS[(d + h + k * 3) % 8]).map(([dc, dr]) => [c + dc, r + dr]).find(cell => !taken.has(cell.join()));
-      if (!spot) continue;
+    // Pieces stand next to different shore notes (those with a free neighbor), in a stable shuffled order.
+    const open = ([c, r]) => DIRS.some(([dc, dr]) => !taken.has(`${c + dc},${r + dr}`));
+    const edge = list.filter(open).sort((a, b) => hash(`${bed}${a}`) - hash(`${bed}${b}`));
+    if (!edge.length) continue;
+    shore.forEach((type, k) => {
+      // Walk the shore until a note still has room beside it.
+      let spot;
+      for (let j = 0; j < edge.length && !spot; j++) {
+        const [c, r] = edge[(k + j) % edge.length];
+        spot = [...DIRS.keys()].map(d => DIRS[(d + h + k * 3) % 8]).map(([dc, dr]) => [c + dc, r + dr]).find(cell => !taken.has(cell.join()));
+      }
+      if (!spot) return;
       taken.add(spot.join());
-      out.push({ type: shore[(out.length + h) % shore.length], c: spot[0], r: spot[1], seed: h });
-    }
+      out.push({ type, c: spot[0], r: spot[1], seed: h + k });
+    });
   }
   return out;
 }
@@ -359,7 +370,7 @@ function cluster(plants, edges, { moonGap = 2.5, roughness = 0.5 } = {}) {
   return cells;
 }
 
-const decorKinds = s => Object.keys(DECOR_TYPES).filter(t => s[DECOR_TYPES[t].key]);
+const decorAmounts = s => Object.fromEntries(Object.entries(DECOR_TYPES).map(([t, d]) => [t, s[d.key]]));
 
 const describe = (p, v) => `${p.file.basename} · ${STAGES[v.level]}${v.state === 'healthy' ? '' : `, ${STATES[v.state]}`} · ${v.leaves} links`;
 
@@ -482,10 +493,13 @@ class GardenView extends ItemView {
     row('Palette').addDropdown(d => d.addOptions(PALETTE_NAMES).setValue(s.palette)
       .onChange(v => { s.palette = v; applyPreset(s, v); redraw(); }));
     row('Trees').addDropdown(d => d.addOptions(TREE_NAMES).setValue(s.treeStyle).onChange(v => { s.treeStyle = v; redraw(); }));
-    row('Decoration').addDropdown(d => d.addOptions(DECOR_NAMES).setValue(s.decor).onChange(v => { s.decor = v; relayout(); }));
-    for (const t of Object.values(DECOR_TYPES)) row(t.name).addToggle(c => c.setValue(s[t.key]).onChange(v => { s[t.key] = v; relayout(); }));
     row('Labels').addDropdown(d => d.addOptions(LABEL_NAMES).setValue(s.labels).onChange(v => { s.labels = v; redraw(); }));
     row('Plant size').addSlider(c => c.setLimits(0.6, 1.6, 0.1).setValue(s.plantScale).setDynamicTooltip().onChange(v => { s.plantScale = v; redraw(); }));
+
+    section('Decoration');
+    for (const t of Object.values(DECOR_TYPES)) {
+      row(t.name).addSlider(c => c.setLimits(0, t.max, 1).setValue(s[t.key]).setDynamicTooltip().onChange(v => { s[t.key] = v; relayout(); }));
+    }
 
     section('Motion');
     row('Sway').addToggle(t => t.setValue(s.sway).onChange(v => { s.sway = v; redraw(); }));
@@ -558,7 +572,7 @@ class GardenView extends ItemView {
     });
 
     // Layout covers the filtered set; the growth animation reuses it so plants appear in place.
-    const key = `${base.join()}|${s.decor}|${decorKinds(s)}`;
+    const key = `${base.join()}|${JSON.stringify(decorAmounts(s))}`;
     if (this.dirty || key !== this.layoutKey) {
       if (key !== this.layoutKey) this.vb = null;
       this.layoutKey = key;
@@ -568,7 +582,7 @@ class GardenView extends ItemView {
       const localEdges = edges.filter(([a, b]) => local.has(a) && local.has(b)).map(([a, b]) => [local.get(a), local.get(b)]);
       const cells = layout(base.map(i => plants[i]), localEdges, s.islandGap, { moonGap: s.moonGap, roughness: s.roughness });
       this.cells = new Map(base.map((g, l) => [g, cells[l]]));
-      this.decor = decorations(cells, base.map(i => plants[i].bed), s.decor, decorKinds(s));
+      this.decor = decorations(cells, base.map(i => plants[i].bed), decorAmounts(s));
       // Older notes sprout first; each note takes a quarter of the animation to grow.
       const ranked = [...base].sort((a, b) => plants[a].ctime - plants[b].ctime || plants[a].file.path.localeCompare(plants[b].file.path));
       this.appear = new Map(ranked.map((i, r) => [i, (r / Math.max(ranked.length, 1)) * 0.75]));
@@ -1124,10 +1138,10 @@ class GardenSettings extends PluginSettingTab {
     slider('Roughness', 'roughness', 0, 1, 0.05);
     slider('Sand furrows', 'rings', 0, 6, 1);
     row('Island names').addToggle(c => c.setValue(s.zoneNames).onChange(v => { s.zoneNames = v; save(); }));
-    row('Decoration', 'How much: pieces for the sand and for the shores of each island.')
-      .addDropdown(c => c.addOptions(DECOR_NAMES).setValue(s.decor).onChange(v => { s.decor = v; save(); }));
+
+    new Setting(containerEl).setName('Decoration').setHeading();
     for (const t of Object.values(DECOR_TYPES)) {
-      row(t.name, t.place === 'sand' ? 'In open sand.' : 'Beside the islands.').addToggle(c => c.setValue(s[t.key]).onChange(v => { s[t.key] = v; save(); }));
+      slider(t.name, t.key, 0, t.max, 1, t.place === 'sand' ? 'In open sand, per 20 notes. 0 hides them.' : 'Beside each island. 0 hides them.');
     }
 
     new Setting(containerEl).setName('Plants').setHeading();
@@ -1187,6 +1201,13 @@ module.exports = class MindGarden extends Plugin {
     const OLD = { grid: [9, 10, 16, 18], blossomColor: ['#f0a35e', '#f2a65a'] };
     for (const [key, values] of Object.entries(OLD)) if (values.includes(this.settings[key])) this.settings[key] = DEFAULTS[key];
     delete this.settings.growIn; // growth now only starts by hand
+    // shortcut: decoration used to be one amount plus on/off per kind; drop once nobody has 1.1.0 data.
+    const was = this.settings.decor;
+    if (was !== undefined) for (const d of Object.values(DECOR_TYPES)) {
+      const on = typeof this.settings[d.key] === 'boolean' ? this.settings[d.key] : this.settings[d.key] > 0;
+      this.settings[d.key] = !on || was === 'none' ? 0 : d.place === 'sand' ? (was === 'lots' ? 10 : 3) : (was === 'lots' ? 2 : 1);
+    }
+    delete this.settings.decor;
     if (!PRESETS[this.settings.palette]) {
       this.settings.palette = 'zen';
       applyPreset(this.settings, 'zen');
